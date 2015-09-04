@@ -7,7 +7,17 @@ require(SDMTools)
 
 setwd("./data")
 
-dat.rf = read.csv("dat.csv")
+dat = read.csv("dat.csv")[-1,]
+dat = subset(dat, !is.na(dat$Aspect))
+dat = subset(dat, !is.na(dat$BPS))
+dat = subset(dat, !is.na(dat$Tavg))
+dat = subset(dat, !is.na(dat$Heatload))
+dat = subset(dat, !is.na(dat$LandOnShp))
+dat = subset(dat, !is.na(dat$TSI))
+
+dat = as.data.frame(dat)
+dat$BPS = as.factor(dat$BPS)
+dat$LandOnShp = as.factor(dat$LandOnShp)
 
 ###################### random forest fitting  ###########################################
 # BPS: vegtation type, 13 class
@@ -18,44 +28,85 @@ dat.rf = read.csv("dat.csv")
 # Aspect: aspect
 # Heatload: heated load index
 # TSI: terrain shape index
-bps.rf <- randomForest(BPS ~ Tjan+Tjul+Tmaysep+PPTjan+PPTjul+PPTmaysep+DEM+Slope+Aspect+Heatload+TSI, data=dat.rf,na.rm = TRUE)
-varImpPlot(bps.rf, sort=TRUE)
+bps.rf <- randomForest(BPS ~ Tjan+Tjul+Tmaysep+PPTjan+PPTjul+PPTmaysep+DEM+Slope+Aspect+Heatload+TSI, #formula
+                       data=dat,
+                       na.rm = TRUE,
+                       ntree=500, #Number of trees to grow. 
+                       mtry = 3) #Number of variables randomly sampled as candidates at each split.
 
-dat$Pred <- predict(bps.rf, data = dat.rf)
+varImpPlot(bps.rf, sort=TRUE) # variable importance plot
+bps.rf #show compontent of results
 
+####################### calculate kappa statistic  ###################
+dat$Pred <- predict(bps.rf, data = dat)
 confusionMatrix(dat$Pred, dat$BPS) #confusionMatrix fuction in 'caret'
 ########################################################################
 Confusion Matrix and Statistics
 
           Reference
 Prediction   1   2   3   4   5   6   7   8   9  10  11  12  13  14
-        1  132  15   2   5   1   4   5   2   6   3  46   1   7   7
-        2   20 160   0  13   4   7   0   0   2   3  11   2  15  40
-        3   19   0 176   0   0   0   4  10   2   0   0   0   0   0
-        4   21  22   0 153   5  22  22  25   6   0   0   3  18   5
-        5    8   8   0   8 102  21   1   2  12   6   8   9  28  11
-        6   14   8   0  12  15  88   8   9   9   2   0   4   5   5
-        7   39  14   2  29   2   7 291  40  14   0   0   4  20   0
-        8   10   2   9  25   1  16  14 107  20   3   0   0   4   0
-        9   16   3   2   4   5   4   1  15 111  37   0   2   2   0
-        10   7   6   0   0   2   0   0   2  33  76  13   0   0   1
-        11 157  27   0   0  16   0   0   0   7  21 715   3  67  25
-        12   0   0   0   1   0   3   0   0   2   0   0   8   2   0
-        13  58  25   0  25 103  20  14  12  13   4  66  19 693  82
-        14  26  35   0   1  10   4   0   0   1   2  24   3  41 203
+        1  142  11   1   2   2   4   5   1   8   2  41   2   4   8
+        2   26 178   0  16   2   9   0   1   4   1  16   1  23  26
+        3   16   0 185   0   0   1   7  12   8   0   0   3   0   0
+        4   13  22   0 137   2  20  25  33  12   0   0   6  11   4
+        5    7   1   0   5  70   7   1   2   7   3  11   7  27   5
+        6   14  16   0  18  13 120   9   9   8   3   5   5  10  13
+        7   40  10   4  43   2  14 268  30  14   1   0   8  16   0
+        8    9   1   8  15   1  11   7 112  20   4   1   0   2   1
+        9   20   4   6   2   3   2   6  19 151  46   0   6   3   1
+        10   6   1   0   0   5   0   0   1  28  66   7   0   0   2
+        11 142  39   0   0  25   1   0   0   7  16 737   0  48  39
+        12   0   0   0   1   0   0   1   0   1   0   0   4   1   0
+        13  52  31   0  25  92  24  10  12  19   3  63  26 655  80
+        14  25  31   0   0   7   7   0   0   1   5  22   0  44 204
 
 Overall Statistics
-                                          
-               Accuracy : 0.6052          
-                 95% CI : (0.5914, 0.6188)
-    No Information Rate : 0.1811          
-    P-Value [Acc > NIR] : < 2.2e-16       
-                                          
-                  Kappa : 0.5552          
- Mcnemar's Test P-Value : NA   
+                                         
+               Accuracy : 0.6087         
+                 95% CI : (0.595, 0.6223)
+    No Information Rate : 0.1815         
+    P-Value [Acc > NIR] : < 2.2e-16      
+                                         
+                  Kappa : 0.5602         
+ Mcnemar's Test P-Value : NA  
  ###############################################################################
  
- 
- ###################### predicting future vegetation  ##########################
+ ##################### plot a single  tree  ####################################
+ to.dendrogram <- function(dfrep,rownum=1,height.increment=0.1){
+
+  if(dfrep[rownum,'status'] == -1){
+    rval <- list()
+
+    attr(rval,"members") <- 1
+    attr(rval,"height") <- 0.0
+    attr(rval,"label") <- dfrep[rownum,'prediction']
+    attr(rval,"leaf") <- TRUE
+
+  }else{##note the change "to.dendrogram" and not "to.dendogram"
+    left <- to.dendrogram(dfrep,dfrep[rownum,'left daughter'],height.increment)
+    right <- to.dendrogram(dfrep,dfrep[rownum,'right daughter'],height.increment)
+    rval <- list(left,right)
+
+    attr(rval,"members") <- attr(left,"members") + attr(right,"members")
+    attr(rval,"height") <- max(attr(left,"height"),attr(right,"height")) + height.increment
+    attr(rval,"leaf") <- FALSE
+    attr(rval,"edgetext") <- dfrep[rownum,'split var']
+  }
+
+  class(rval) <- "dendrogram"
+  return(rval)
+}
+
+
+tree <- getTree(bps.rf,1,labelVar=TRUE)
+
+d <- to.dendrogram(tree)
+str(d)
+plot(d,center=TRUE,leaflab='none',edgePar=list(t.cex=1,p.col=NA,p.lty=0))
+
+###################### predicting future vegetation  ##########################
 BPS.Pred.future <- predict(predictors.future, bps.rf) #raster method to predict vegetation distribution
 writeRaster(BPS.Pred.future, filename="BPS.Pred.future.asc", format="ascii", overwrite=TRUE)  
+
+
+
