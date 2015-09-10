@@ -1,11 +1,10 @@
-##############################################################################
-##########          Predicting future fire patterns   ########################
-################             5/31/2013                ########################
+###################       9/10/2015            ###############################
+##########             Fire simulation model            ######################
 
+#load libraries
 library(gbm)
 library(dismo)
 library("ncdf")
-#library("field")
 library("raster")
 library("maptools")
 library("rgdal")
@@ -14,32 +13,28 @@ library("rgeos")
 library("sp")
 library("shapefiles")
 
-load("V:\\ZhihuaLiu\\MTBSsubset\\WestUSbrt\\gbm.fs.rda")
+setwd(".\\data")
+
+#load fire size model
+load("gbm.fs.rda") 
 Residuals =gbm.fs$residuals
 Residuals.mean = mean(Residuals)
 Residuals.sd = sd(Residuals)
-#load("V:\\ZhihuaLiu\\MTBSsubset\\WestUSbrt\\Read.environmental.variable2.brt.gfdl.RData")
-#load("V:\\ZhihuaLiu\\MTBSsubset\\WestUSbrt\\StackFutureClimate.brt.gfdl.RData")
-source("V:\\ZhihuaLiu\\MTBSsubset\\WestUSbrt\\Read.environmental.variable2.brt.r")
-#load("V:\\ZhihuaLiu\\MTBSsubset\\WestUSbrt\\StackFutureClimate.brt.gfdl.RData")
-source("V:\\ZhihuaLiu\\MTBSsubset\\WestUSbrt\\StackFutureClimate.brt.r")
-names(predictors) = c("DEM", "Slop", "Heatload", "TSI", "D2Rd", "D2WUI", "BPSorginal", "LandOnShp","Aspect","BPS")
-names(predictors.future) = c("DEM", "Slop", "Heatload", "TSI", "D2Rd", "D2WUI", "BPSorginal", "LandOnShp","Aspect","BPS")
-layerNames(predictors) = c("DEM", "Slop", "Heatload", "TSI", "D2Rd", "D2WUI", "BPSorginal", "LandOnShp","Aspect","BPS")
-layerNames(predictors.future) = c("DEM", "Slop", "Heatload", "TSI", "D2Rd", "D2WUI", "BPSorginal", "LandOnShp","Aspect","BPS")
 
-setwd("V:\\ZhihuaLiu\\MTBSsubset\\Gisdata")
+#read environmental data
+source("Read.environmental.variable2.brt.r")
 
-##BEGIN of fire spead function
+#read climate data
+source("StackFutureClimate.brt.r")
 
-###NOT for parallel computing
+### define some functions
+#a fire spread function
 FireSp3 <- function(row.n, col.n, size, p1)  ##row.n, col.n in cells, size in ha, p1 is the burned probability matrix
 {
   ##convert fire size into numbers of cells
   cell.n = floor(size*0.01)
   #1 spread begins
   #1.1 produce an accumulative travel cost surface
-  #/ p1 = as.matrix(BP) BP = burn probability map, BP should be available before simulation begins
   #1.1.1 producing distance to fire source map
   p2 = p1
   for (i in 1:nrow(p1)){ 
@@ -57,8 +52,8 @@ FireSp3 <- function(row.n, col.n, size, p1)  ##row.n, col.n in cells, size in ha
   }
   return(FireSP) ##return a matrix
 }
-###NOT for parallel computing
 
+#modified fire spread funciton for edges
 FireSp4 <- function(row.n, col.n, size, nc = 1683, nr = 2174)  ##row.n, col.n in cells, size in ha, p1 is the burned probability matrix
 {
   ##convert fire size into numbers of cells
@@ -76,6 +71,7 @@ FireSp4 <- function(row.n, col.n, size, nc = 1683, nr = 2174)  ##row.n, col.n in
   FireSP[(row.n-R):(row.n+R),(col.n-R):(col.n+R)] = 1
   return(FireSP) ##return a matrix
 }
+
 #sample the fire occurrence date
 SAMPLE = function(x){
 if (length(which(x>=40)>0)) {
@@ -95,23 +91,22 @@ if (length(which(x>=40)>0)) {
 return(P)
 }
 
-#record whether >40 days requirement is met 
+#record whether >45 days requirement is met 
 SAMPLE2 = function(x){
-if (length(which(x>=40)>0)) {
- P1 = length(which(x>=40))
+if (length(which(x>=45)>0)) {
+ P1 = length(which(x>=45))
  } else 
   P1 = 0
 return(P1)
 }
 
-###read future fire occurrence probability map
+# read future fire occurrence probability map
 proj.eco = "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"
 proj.geo = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +towgs84=0,0,0"
 
 p.occ = raster("p.occ.gldl.brt.asc")
 p.burn = raster("p.burn.future.asc")
 projection(p.occ) <- proj.eco
-#/ pgeo <- projectRaster(pfuture, crs=proj.geo)  ##slow process here
 p.occ = crop(p.occ, extent(mask))
 extent(p.occ) <- extent(mask)
 projection(p.occ) <- projection(mask)
@@ -123,7 +118,7 @@ projection(p.burn) <- projection(mask)
 p.burn = p.burn*mask
 
 
-FP1 = p.occ ##give a empty raster for burned probability initialization
+FP1 = p.occ ##produce a empty raster for burned probability initialization
 FP1[FP1>-90] = 0
 FP2 = as.matrix(FP1)
 
@@ -155,14 +150,8 @@ Tname = c("FireOccDate1", "TMn","TMx", "TAo","T90Mn", "T90Ao","TPMn", "TPAo", "T
 Wname = c("FireOccDate1", "WMn","WMx")
 ln = list(Pname,Tname,Wname)
 
-setwd("V:\\ZhihuaLiu\\MTBSsubset\\Projectionbrt1003")
-
-rm(list = c('predictors','mask')) #free up some memory
-
 FIRE.BURN.LIST.CURRENT = list()
-FIRE.BURN.LIST.CURRENT.gam = list()
 FIRE.SIZE = c()
-FIRE.SIZE.gam = c()
 FIREDATE =c()
 FIREDATEYr = c()
 DATEmeet = c()  #record how often >40 days requirement is not met
@@ -171,7 +160,7 @@ NofSim = 0
 repeat {
 NofSim = NofSim+1
 
-##Single Simulate BEGINS from here
+##Single Fire Simulate BEGINS from here
 FireIg = matrix(data = 0, nrow = nr, ncol = nc) #create a matrix with 0
 FireLoc = c() #record fire location
 FireIgAtt = c() # record the ith trail
@@ -195,7 +184,7 @@ sum1 = sum(FireIg)
 if(sum1>NumFire){break}
 }
 }
-print(paste("GFDL Climate + Vegetation: Simulating fire occurrece: Simulation No = ", NofSim, " at", format(Sys.time(), "%a %b %d %X %Y"), sep = " ") )
+print(paste("Simulating fire occurrece: Simulation No = ", NofSim, " at", format(Sys.time(), "%a %b %d %X %Y"), sep = " ") )
 
 FireLoc = cbind(FireLoc)
 colnames(FireLoc) = c("nrow", "ncol")
@@ -205,25 +194,13 @@ y.cor = ymax(p.occ) - FireLoc[,1]*1000
 FireLoc2 = cbind(x.cor, y.cor)
 
 ##change the meter to degress in FireLoc2
-#/ x.cor1 = FireLoc[,2]*xres(pgeo)*(dim(pgeo)[2]/dim(p)[2])+xmin(pgeo)
-#/ y.cor1 = ymax(pgeo) - FireLoc[,1]*yres(pgeo)*(dim(pgeo)[1]/dim(p)[1])
-#/ FireLoc3 = cbind(x.cor1, y.cor1)
 FireLoc3 <- SpatialPoints(FireLoc2)
 proj4string(FireLoc3) = proj.eco
 FireLoc3.geo = spTransform(FireLoc3, CRS(paste("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +towgs84=0,0,0")))
 FireLoc3 = FireLoc3.geo
 
-#/ #par(mfrow=c(2,1),mar=c(5,2,1,0)+.1)
-#/ fn = paste("D:\\dataset\\MTBSdata\\FireProjection\\sub3\\SimulatedFireOcuFuture",NofSim,".tif", sep = "" )
-#/ tiff(fn,height = 2000, width = 3000, res = 300, units = "px")
-#/ plot(p.occ,main = "Fire occurrence probability surface \n Red circle = Simulated Fire occurence)")
-#/ points(FireLoc2, col = "red")
-#/ dev.off()
-
 ########################### Predict fire size from here #######################
 ########      Predict fire size: step 1, randomly get a fire date    ##########               
-
-#####  edit at 6/27/2013 ###############
 #step 1: extract climate series data
 
 PrcpMean.t1 = extract(B.prec, FireLoc3)  ###slow here
@@ -295,7 +272,6 @@ DATEmeet = cbind(DATEmeet, apply(Climt2[,732:7300],1, SAMPLE2))
 CliVar1 = c("pr_","tmmx_","tmmn_","vs_")
 CliVar = c("prec","tmax","tmin","vs")
 dat = c("20C3M_19712000", "A1B_20812100")
-
 
 MN.prec = extract(MN.prec.R, FireLoc3)
 MN.prec_may2sep = extract(pr_mean_may2sep.R, FireLoc3)
@@ -378,7 +354,6 @@ for (Fid in 1:nrow(FireLoc2)){ ###for each simulated fire
 }
 Prcp = cbind(FireOccDate, PrcpMean,PrcpM, Prcpano,Prcp90Mean, Prcp90ano,PrcpPreYMean, PrcpPreYano, PrcpPreYWMean, PrcpPreYWano, PrcpPre2YGMean,PrcpPre2YGano, PrcpPre2YAMean, PrcpPre2YAano)
 colnames(Prcp) = ln[[1]]
-
 
 ###############################  calculate maximum temperature  ###############################
 MN.tmax = extract(MN.tmax.R, FireLoc3)
@@ -535,7 +510,7 @@ rm(list = c('FP.t1','FireIg','TmaxMean.t1', 'PrcpMean.t1','Climt2','WindMean.t1'
 if(NofSim>=500){break}
 }
 
-save.image("V:\\ZhihuaLiu\\MTBSsubset\\Projectionbrt1003\\futureGFDL_run1.RData")
+save.image("run1.RData")
 
 ###############################################################################################
 ############               Entire simulate ends here             ##############################
@@ -551,9 +526,9 @@ FP = raster(FP)
 extent(FP)<-extent(p.occ)
 projection(FP)<-projection(p.occ)
 
-writeRaster(FP, filename="V:\\ZhihuaLiu\\MTBSsubset\\Projectionbrt1003\\futureGFDL_run1_brt.asc", format="ascii", overwrite=TRUE)   
+writeRaster(FP, filename="run1_brt.asc", format="ascii", overwrite=TRUE)   
 
-write.csv(FIRE.SIZE, "V:\\ZhihuaLiu\\MTBSsubset\\Projectionbrt1003\\futureGFDL_run1_FireSize_brt.csv")
-write.csv(FIREDATE, "V:\\ZhihuaLiu\\MTBSsubset\\Projectionbrt1003\\futureGFDL_run1_FireDate.csv")
-write.csv(FIREDATEYr, "V:\\ZhihuaLiu\\MTBSsubset\\Projectionbrt1003\\futureGFDL_run1_FireYr.csv")
+write.csv(FIRE.SIZE, "run1_FireSize_brt.csv")
+write.csv(FIREDATE, "run1_FireDate.csv")
+write.csv(FIREDATEYr, "run1_FireYr.csv")
 
