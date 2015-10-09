@@ -27,98 +27,27 @@ source("Read.environmental.variable2.brt.r")
 #read climate data
 source("StackFutureClimate.brt.r")
 
-### define some functions
-#a fire spread function
-FireSp3 <- function(row.n, col.n, size, p1)  ##row.n, col.n in cells, size in ha, p1 is the burned probability matrix
-{
-  ##convert fire size into numbers of cells
-  cell.n = floor(size*0.01)
-  #1 spread begins
-  #1.1 produce an accumulative travel cost surface
-  #1.1.1 producing distance to fire source map
-  p2 = p1
-  for (i in 1:nrow(p1)){ 
-    for (j in 1:ncol(p1)){ 
-      p2[i,j] = sqrt((i-row.n)*(i-row.n)+(j-col.n)*(j-col.n))
-    }
-  }
-  #1.1.2 producing accumulative travel cost surface
-  BP.cost = p2/p1
-  #1.2 produce an fire shape
-  Breakpoint = 0
-  while(cell.n - sum(rowSums(FireSP))>1) { #do until the difference between pre-defined fire size and simulated fire size < 2 cells
-    Breakpoint = Breakpoint+1
-    FireSP[BP.cost<Breakpoint] = 1
-  }
-  return(FireSP) ##return a matrix
-}
-
-#modified fire spread funciton for edges
-FireSp4 <- function(row.n, col.n, size, nc = 1683, nr = 2174)  ##row.n, col.n in cells, size in ha, p1 is the burned probability matrix
-{
-  ##convert fire size into numbers of cells
-  cell.n = size*0.01
-  R = floor(sqrt(cell.n)/2)
-   if ((col.n-R)<0)
-     col.n = col.n+R
-	  else if ((col.n+R)>nc)
-        col.n = col.n-R
-        else if ((row.n-R)<0)
-		 row.n = row.n+R
-		  else if ((row.n+R)>nr)
-		  row.n = row.n-R
-  else
-  FireSP[(row.n-R):(row.n+R),(col.n-R):(col.n+R)] = 1
-  return(FireSP) ##return a matrix
-}
-
-#sample the fire occurrence date
-SAMPLE = function(x){
-if (length(which(x>=40)>0)) {
- P1 = which(x>=40)
- P = P1[sample(1:length(P1), 1)]
- } else 
- if (length(which(x>=30 & x<40)>0)) {
- P1 = which(x>=30 & x<40)
- P = P1[sample(1:length(P1), 1)]
-  } else 
-  if (length(which(x>=20 & x<30)>0)) {
-  P1 = which(x>=20 & x<30)
-  P = P1[sample(1:length(P1), 1)]
- } else 
-	 P1 = which(x>=1 & x<20)
-     P = P1[sample(1:length(P1), 1)]
-return(P)
-}
-
-#record whether >45 days requirement is met 
-SAMPLE2 = function(x){
-if (length(which(x>=45)>0)) {
- P1 = length(which(x>=45))
- } else 
-  P1 = 0
-return(P1)
-}
-
-# read future fire occurrence probability map
+#define projections
 proj.eco = "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"
 proj.geo = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +towgs84=0,0,0"
 
-p.occ = raster("p.occ.gldl.brt.asc")
-p.burn = raster("p.burn.future.asc")
+# read future fire occurrence and spread probability map
+p.occ = raster("p.occ.gldl.brt.asc") 
+p.burn = raster("p.burn.future.asc") 
 projection(p.occ) <- proj.eco
 p.occ = crop(p.occ, extent(mask))
 extent(p.occ) <- extent(mask)
 projection(p.occ) <- projection(mask)
 p.occ = p.occ*mask
 
+# read fire spread probability map
 p.burn = crop(p.burn, extent(mask))
 extent(p.burn) <- extent(mask)
 projection(p.burn) <- projection(mask)
 p.burn = p.burn*mask
 
-
-FP1 = p.occ ##produce a empty raster for burned probability initialization
+##produce a empty raster for burned probability initialization
+FP1 = p.occ 
 FP1[FP1>-90] = 0
 FP2 = as.matrix(FP1)
 
@@ -143,27 +72,29 @@ p1 = as.matrix(p.burn) ##p1 is burn probability, needed for fire spread
 M30 = matrix(0, nrow = 61,ncol = 61)
 M302 = matrix(0, nrow = 61,ncol = 61)
 ###############################################################################################
-#########The following code need loop for multiple simulation##############################
+#########               Fire simulation begins here              ##############################
 ###############################################################################################
 Pname = c("FireOccDate1", "PMn","PMx", "PAo","P90Mn", "P90Ao","PPMn", "PPAo", "PWMn","PWAo", "PP2GMn", "PP2GAo", "PP2Mn", "PP2Ao")
 Tname = c("FireOccDate1", "TMn","TMx", "TAo","T90Mn", "T90Ao","TPMn", "TPAo", "TWMn","TWAo", "TP2GMn", "TP2GAo", "TP2Mn", "TP2Ao")
 Wname = c("FireOccDate1", "WMn","WMx")
 ln = list(Pname,Tname,Wname)
 
-FIRE.BURN.LIST.CURRENT = list()
-FIRE.SIZE = c()
-FIREDATE =c()
-FIREDATEYr = c()
-DATEmeet = c()  #record how often >40 days requirement is not met
+#create list to store output
+FIRE.BURN.LIST.CURRENT = list() #store burned pattern raster
+FIRE.SIZE = c()			#store fire size
+FIREDATE =c()			#store fire date
+FIREDATEYr = c()		#store fire year
+DATEmeet = c()  		#record how often >40 days requirement is not met
 
-NofSim = 0
+NofSim = 0			#control number of replicate, 500 here
 repeat {
 NofSim = NofSim+1
 
-##Single Fire Simulate BEGINS from here
+#######  Single Fire Simulate BEGINS from here #########################
+# Part 1: simulate location of fire occurrece
 FireIg = matrix(data = 0, nrow = nr, ncol = nc) #create a matrix with 0
-FireLoc = c() #record fire location
-FireIgAtt = c() # record the ith trail
+FireLoc = c() 					#record fire location
+FireIgAtt = c() 				# record the ith trail
 N = 0
 repeat {
 N = N+1
@@ -199,19 +130,16 @@ proj4string(FireLoc3) = proj.eco
 FireLoc3.geo = spTransform(FireLoc3, CRS(paste("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +towgs84=0,0,0")))
 FireLoc3 = FireLoc3.geo
 
-########################### Predict fire size from here #######################
-########      Predict fire size: step 1, randomly get a fire date    ##########               
-#step 1: extract climate series data
-
-PrcpMean.t1 = extract(B.prec, FireLoc3)  ###slow here
+# Part 2: Predict size for each fire
+# Part 2: step 1 - simulating fire date
+# extract climate series data
+PrcpMean.t1 = extract(B.prec, FireLoc3)  # daily rainfall for each fire location
 PrcpMean.t1 = as.data.frame(PrcpMean.t1)
 
-TmaxMean.t1 = extract(B.tmax, FireLoc3)
+TmaxMean.t1 = extract(B.tmax, FireLoc3) # daily temperature for each fire location
 TmaxMean.t1 = as.data.frame(TmaxMean.t1)
 
-#step 2: compute the quantile data
-##compute 10 quantile for precentile
-
+#compute the quantile data
 Qutile = function(x){quantile(x, probs = 0.1, na.rm = TRUE)}
 PrcpQu10 = apply(PrcpMean.t1, 1, Qutile)
 
@@ -246,8 +174,8 @@ Repl = function(x){
 TmaxMean.t2 = apply(cbind(TmaxMean.t1, TmaxQu90), 1, Repl) ##combine the temperature and threshold
 TmaxMean.t2 = t(TmaxMean.t2)
 
-#####step 3: cunstruct a climate matrix, if accumulated 45 day before each day is > 60, it means at least
-#####we have 30 days with temperature =1 (> 90 percentile) and prec = 1 (< 10 percentile) 
+# cunstruct a climate matrix, if accumulated 45 day before each day is > 60, it means at least
+# 30 days with temperature =1 (> 90 percentile) and prec = 1 (< 10 percentile) 
 #/ Climt = tmaxMean.t2+PrcpMean.t2 
 Climt = TmaxMean.t2
 Climt2 = Climt
@@ -260,19 +188,18 @@ for (jj in 366:ncol(Climt)){
 }
 
 rm(Climt,TmaxMean.t2, PrcpMean.t2,TmaxQu90,PrcpQu10, jj)
-### step 4: get a candidate date for each fires and then sample the date randomly
+# get a candidate date for each fires and then sample the date randomly
 FireOccDate = apply(Climt2[,732:7300],1, SAMPLE)+731
 FIREDATE = cbind(FIREDATE, FireOccDate%%365)
 FIREDATEYr = cbind(FIREDATEYr, FireOccDate%/%365+2080)
 DATEmeet = cbind(DATEmeet, apply(Climt2[,732:7300],1, SAMPLE2))
-######end of edit at 6/21/2013 ###############
 
-########      Predict fire size: step 2, calculate climate variables for each fire    ##########     
-#########2.1   calculate precipation #############
+# Part 2: step 2 - calculate climate variables for each fire
 CliVar1 = c("pr_","tmmx_","tmmn_","vs_")
 CliVar = c("prec","tmax","tmin","vs")
 dat = c("20C3M_19712000", "A1B_20812100")
 
+# 2.2.1   calculate precipation
 MN.prec = extract(MN.prec.R, FireLoc3)
 MN.prec_may2sep = extract(pr_mean_may2sep.R, FireLoc3)
 PrcpMean = c()
@@ -355,7 +282,7 @@ for (Fid in 1:nrow(FireLoc2)){ ###for each simulated fire
 Prcp = cbind(FireOccDate, PrcpMean,PrcpM, Prcpano,Prcp90Mean, Prcp90ano,PrcpPreYMean, PrcpPreYano, PrcpPreYWMean, PrcpPreYWano, PrcpPre2YGMean,PrcpPre2YGano, PrcpPre2YAMean, PrcpPre2YAano)
 colnames(Prcp) = ln[[1]]
 
-###############################  calculate maximum temperature  ###############################
+# 2.2.2   calculate temperature
 MN.tmax = extract(MN.tmax.R, FireLoc3)
 MN.tmax_may2sep = extract(tmax_mean_may2sep.R, FireLoc3)
 
@@ -438,8 +365,7 @@ for (Fid in 1:nrow(FireLoc2)){ ###for each simulated fire
 Tmax = cbind(FireOccDate, TmaxMean,TmaxM, Tmaxano,Tmax90Mean, Tmax90ano,TmaxPreYMean, TmaxPreYano, TmaxPreYWMean, TmaxPreYWano, TmaxPre2YGMean,TmaxPre2YGano, TmaxPre2YAMean, TmaxPre2YAano)
 colnames(Tmax) = ln[[2]]
 
-
-########################  calculating wind  ###################################
+# 2.2.3   calculate wind speed
  WindMean.t1 = extract(B.vs, FireLoc3)
  WindMean.t1 = as.data.frame(WindMean.t1)
  
@@ -463,20 +389,20 @@ for (Fid in 1:nrow(FireLoc2)){ ###for each simulated fire
 Wind = cbind(FireOccDate, WindMean,WindM)
 colnames(Wind) = ln[[3]]
 
-########      Predict fire size: step 3, sample environmental variables for each fire,     ##########     
+# Part 2: step 3 - sample environmental variables for each fire
 FireP.dataP = extract(predictors.future, FireLoc2)  #using the current predictors
 #/ ##combine the environmental data and climate data
 #/ dat.new = cbind(FireP.dataP,tmax1,tmin1, wind1, prec1)
 dat.new = cbind(FireP.dataP,Tmax,Prcp,Wind)
 dat.new = as.data.frame(dat.new)
 
-#### Predict fire size: step 4, predict fire size based on gbm model     
+# Part 2:  step 4, predict fire size based on brt model     
 dat.new$FireSize = predict.gbm(gbm.fs, dat.new,n.trees = gbm.fs$gbm.call$best.trees, type="response")+rnorm(nrow(FireLoc2),mean = Residuals.mean, sd = Residuals.sd)
 FireLoc2 = cbind(FireLoc2, dat.new$FireSize)
 colnames(FireLoc2) = c("x", "y", "size")
 FireLoc2 = as.data.frame(FireLoc2)
 
-#################  simulate fire spread here  #####################
+# Part 3:  simulate spread for each fire
 FP = FP2 #initialize a 0 value matrix
 FireLoc = cbind(FireLoc,exp(dat.new$FireSize))
 colnames(FireLoc) = c("nrow", "ncol", "size")
@@ -496,9 +422,7 @@ FP.t1[(FireLoc[i,1]-30):(FireLoc[i,1]+30),(FireLoc[i,2]-30):(FireLoc[i,2]+30)] =
 FP = FP + FP.t1}
 print(paste("GFDL Climate + Vegetation: Spreading:: BRT : Simulation No = ", NofSim, " for ", i,"th fire of ", nrow(FireLoc)," at ", format(Sys.time(), "%a %b %d %X %Y"), sep = " ") )
 }
-#################  simulate fire spread ends here  #####################
-##Single Simulate ENDS from here
-
+#######  Single Fire Simulate ENDS here #########################
 
 FIRE.SIZE = cbind(FIRE.SIZE, FireLoc2$size)
 FIRE.BURN.LIST.CURRENT[[NofSim]] <- FP
@@ -515,7 +439,9 @@ save.image("run1.RData")
 ###############################################################################################
 ############               Entire simulate ends here             ##############################
 ###############################################################################################
-#for BRT
+
+#Post-simulation processing
+#part 1: producing burn rate
 FP = FP2 #initialize a 0 value matrix
 for (i in 1:length(FIRE.BURN.LIST.CURRENT)){
   FP = FP+FIRE.BURN.LIST.CURRENT[[i]]
@@ -525,9 +451,9 @@ for (i in 1:length(FIRE.BURN.LIST.CURRENT)){
 FP = raster(FP)
 extent(FP)<-extent(p.occ)
 projection(FP)<-projection(p.occ)
-
 writeRaster(FP, filename="run1_brt.asc", format="ascii", overwrite=TRUE)   
 
+#part 1: write out fire size and date
 write.csv(FIRE.SIZE, "run1_FireSize_brt.csv")
 write.csv(FIREDATE, "run1_FireDate.csv")
 write.csv(FIREDATEYr, "run1_FireYr.csv")
